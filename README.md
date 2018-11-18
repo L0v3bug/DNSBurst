@@ -2,6 +2,12 @@
 
 Test DNS server performance.
 
+## Installation
+
+- `git clone git@github.com:L0v3bug/dnsburst.git`
+- `cd dnsburst`
+- `perl dnsburst.pl --help`
+
 ## Usage
 
 ```
