@@ -216,51 +216,51 @@ sub create_resolver(;$$$) {
 }
 
 sub _calcul_stats($) {
-    my ( $stats ) = @_;
+    my ( $info_burst ) = @_;
 
-    my $av_tm_rqt_r = 0;
-    my $av_tm_rqt_u = 0;
-    my $av_tm_rqt_s = 0;
-    my $av_rqt_tm_u = 0;
-    my $per_succeed = 0;
-    my $per_failed = 0;
+    my $average_time_rqt_real = 0;
+    my $average_time_rqt_user = 0;
+    my $average_time_rqt_system = 0;
+    my $average_requests_second = 0;
+    my $succeed_rqts_percent = 0;
+    my $failed_rqts_percent = 0;
 
-    my $tt_reel = $stats->{'total_time'}->[0];
-    my $tt_user = $stats->{'total_time'}->[1];
-    my $tt_system = $stats->{'total_time'}->[2];
-    my $success_rqt = $stats->{'success_count'};
-    my $fail_rqt = $stats->{'error_count'};
+    my $total_time_real = $info_burst->{'total_time'}->[0];
+    my $total_time_user = $info_burst->{'total_time'}->[1];
+    my $total_time_system = $info_burst->{'total_time'}->[2];
+    my $succeed_requests = $info_burst->{'succeed_requests'};
+    my $failed_requests = $info_burst->{'failed_requests'};
 
-    if ( $stats->{'total_requests'} ) {
-        $av_tm_rqt_r = $tt_reel / $stats->{'total_requests'};
-        $av_tm_rqt_u = $tt_user / $stats->{'total_requests'};
-        $av_tm_rqt_s = $tt_system / $stats->{'total_requests'};
-        $per_succeed = ($success_rqt / $stats->{'total_requests'})*100;
-        $per_failed = ($fail_rqt / $stats->{'total_requests'})*100;
+    if ( $info_burst->{'total_requests'} ) {
+        $average_time_rqt_real = $total_time_real / $info_burst->{'total_requests'};
+        $average_time_rqt_user = $total_time_user / $info_burst->{'total_requests'};
+        $average_time_rqt_system = $total_time_system / $info_burst->{'total_requests'};
+        $succeed_rqts_percent = ($succeed_requests / $info_burst->{'total_requests'}) * 100;
+        $failed_rqts_percent = ($failed_requests / $info_burst->{'total_requests'}) * 100;
     }
 
-    if ( $stats->{'total_time'}->[0] ) {
-        $av_rqt_tm_u = $stats->{'total_requests'} / $tt_reel;
+    if ( $info_burst->{'total_time'}->[0] ) {
+        $average_requests_second = $info_burst->{'total_requests'} / $total_time_real;
     }
 
     return {
-        'sended_requests' => $stats->{'total_requests'},
-        'domain_requested' => $stats->{'domain_requests'},
+        'sended_requests' => $info_burst->{'total_requests'},
+        'domain_requested' => $info_burst->{'domain_requests'},
         'total_time' => {
-            'real' => $tt_reel,
-            'user' => $tt_user,
-            'system' => $tt_system
+            'real' => $total_time_real,
+            'user' => $total_time_user,
+            'system' => $total_time_system
         },
         'average_time_for_request' => {
-            'real' => $av_tm_rqt_r,
-            'user' => $av_tm_rqt_u,
-            'system' => $av_tm_rqt_s
+            'real' => $average_time_rqt_real,
+            'user' => $average_time_rqt_user,
+            'system' => $average_time_rqt_system
         },
-        'average_requests_second' => $av_rqt_tm_u,
-        'succeed_requests' => $success_rqt,
-        'failed_requests' => $fail_rqt,
-        'succeed_requests_percent' => $per_succeed,
-        'failed_requests_percent' =>$per_failed
+        'average_requests_second' => $average_requests_second,
+        'succeed_requests' => $succeed_requests,
+        'failed_requests' => $failed_requests,
+        'succeed_requests_percent' => $succeed_rqts_percent,
+        'failed_requests_percent' =>$failed_rqts_percent
     };
 }
 
@@ -290,13 +290,13 @@ sub _human_readable_stats($) {
 }
 
 sub display_stats($$) {
-    my ( $stats, $display_in_json ) = @_;
-    my $calculated_stats = _calcul_stats( $stats );
+    my ( $info_burst, $display_in_json ) = @_;
+    my $stats = _calcul_stats( $info_burst );
 
-    if ($display_in_json) {
-        print JSON::XS->new->encode( $calculated_stats );
+    if ( $display_in_json ) {
+        print JSON::XS->new->encode( $stats );
     } else {
-        _human_readable_stats( $calculated_stats );
+        _human_readable_stats( $stats );
     }
 }
 
@@ -307,7 +307,7 @@ sub _dns_rqt($$$) {
 }
 
 sub _dns_answers_ready($$$;$) {
-    my ( $resolver, $buffer, $stats, $must_wait_to_be_empty ) = @_;
+    my ( $resolver, $buffer, $info_burst, $must_wait_to_be_empty ) = @_;
     my $repeat = 1;
 
     while ( $repeat or
@@ -319,17 +319,17 @@ sub _dns_answers_ready($$$;$) {
                 $packet = $resolver->bgread($packet);
                 splice( @$buffer, $i, 1 );
                 $i--;
-                $stats->{'answer_count'}++;
+                $info_burst->{'answer_count'}++;
                 $repeat = 0;
                 if ( defined( $packet ) ) {
                     my $code = $packet->header->rcode;
                     if ($code eq 'NOERROR') {
-                        $stats->{'success_count'}++;
+                        $info_burst->{'succeed_requests'}++;
                     } else {
-                        $stats->{'error_count'}++;
+                        $info_burst->{'failed_requests'}++;
                     }
                 } else {
-                    $stats->{'error_count'}++;
+                    $info_burst->{'failed_requests'}++;
                 }
             }
         }
@@ -346,13 +346,13 @@ sub burst($$$) {
     my @jobs_buffer = ();
     my $is_job_start = 0;
     my $t0 = undef;
-    my $stats = {
+    my $info_burst = {
         'total_requests' => 0,
         'domain_requests' => 0,
         'total_time' => 0,
         'answer_count' => 0,
-        'error_count' => 0,
-        'success_count' => 0,
+        'failed_requests' => 0,
+        'succeed_requests' => 0,
     };
 
     foreach my $domain ( <> ) {
@@ -369,7 +369,7 @@ sub burst($$$) {
         }
 
         log_info('Domain: '.$domain);
-        $stats->{'domain_requests'}++;
+        $info_burst->{'domain_requests'}++;
 
         my $remaining_rqts = $rqts_by_domain;
         while ( $remaining_rqts > 0 ) {
@@ -377,20 +377,20 @@ sub burst($$$) {
                 for ( ; $remaining_rqts > 0 and scalar @jobs_buffer < $jobs;
                         $remaining_rqts-- ) {
                     _dns_rqt( $resolver, \@jobs_buffer, $domain );
-                    $stats->{'total_requests'}++;
+                    $info_burst->{'total_requests'}++;
                 }
             } else {
-                _dns_answers_ready( $resolver, \@jobs_buffer, $stats );
+                _dns_answers_ready( $resolver, \@jobs_buffer, $info_burst );
             }
         }
     }
 
-    _dns_answers_ready( $resolver, \@jobs_buffer, $stats, 1 );
+    _dns_answers_ready( $resolver, \@jobs_buffer, $info_burst, 1 );
 
     my $t1 = Benchmark->new;
-    $stats->{'total_time'} =  timediff($t1, $t0);
+    $info_burst->{'total_time'} =  timediff($t1, $t0);
 
-    return $stats;
+    return $info_burst;
 }
 
 #-----------------------------------------------------------------------------#
@@ -472,5 +472,5 @@ unless (check_arguments(\@ARGV)) {
 #-----------------------------------------------------------------------------#
 
 my $resolver = create_resolver( $server, $timeout, $recurse );
-my $stats = burst( $resolver, $jobs, $rqts_by_domain );
-display_stats( $stats, $display_in_json );
+my $info_burst = burst( $resolver, $jobs, $rqts_by_domain );
+display_stats( $info_burst, $display_in_json );
