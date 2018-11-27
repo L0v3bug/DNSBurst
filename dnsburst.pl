@@ -10,30 +10,36 @@ use Time::Piece;
 use Benchmark;
 use Time::HiRes;
 use JSON::XS;
+use Sys::Syslog;
+use Sys::Syslog qw(:standard :macros);
 
 use constant PROGRAM_NAME               => 'dnsburst';
 use constant PROGRAM_VERSION            => '1.0';
 
-use constant VERBOSE_DEACTIVATE         => 0;
-use constant VERBOSE_ACTIVE             => 1;
 use constant RECURSION_OK               => 1;
 use constant RECURSION_NOK              => 0;
-use constant LOG_DEBUG                  => 'DBG';
-use constant LOG_INFO                   => 'INF';
-use constant LOG_WARNING                => 'WAR';
-use constant LOG_ERROR                  => 'ERR';
 use constant SLEEP                      => 0.1;
 use constant ROUND_FLOAT                => 5;
 
-use constant DEFAULT_VERBOSITY          => VERBOSE_DEACTIVATE;
 use constant DEFAULT_TIME_OUT           => 10;
 use constant DEFAULT_JOBS               => 10;
 use constant DEFAULT_RQTS_BY_DOMAIN     => 1;
+use constant DEFAULT_SYSLOG_CONFIG     => "nofatal,ndelay,pid";
+use constant DEFAULT_VERBOSITY_LVL     => 4;
 
 
 $Getopt::Std::STANDARD_HELP_VERSION = 1;
 
-our $verbosity  = DEFAULT_VERBOSITY;
+my $priorities_tag = {
+    'emerg', => '[EMR]',
+    'alert', => '[ALR]',
+    'crit', => '[CRI]',
+    'err', => '[ERR]',
+    'warning', => '[WRN]',
+    'notice', => '[NOT]',
+    'info', => '[INF]',
+    'debug' => '[DBG]'
+};
 
 #-----------------------------------------------------------------------------#
 # Subroutines
@@ -78,41 +84,29 @@ sub check_arguments($) {
     }
 }
 
-sub _timestamp {
-    my $time = localtime();
-    return $time->strftime("%H:%M:%S %d-%m-%Y");
-}
-
 sub _log($$) {
     my ( $msg, $lvl ) = @_;
-
-    if ( $verbosity == VERBOSE_DEACTIVATE ) {
-        return;
-    }
-
-    my $timestamp = _timestamp();
-
-    say STDERR ( $timestamp.' '.PROGRAM_NAME.' ['.$lvl.'] '.$msg ) ;
+    syslog($lvl, $priorities_tag->{$lvl}.' '.$msg);
 }
 
 sub log_debug($) {
     my ( $msg ) = @_;
-    _log($msg, LOG_DEBUG);
+    _log($msg, 'debug');
 }
 
 sub log_info($) {
     my ( $msg ) = @_;
-    _log($msg, LOG_INFO);
+    _log($msg, 'info');
 }
 
 sub log_warning($) {
     my ( $msg ) = @_;
-    _log($msg, LOG_WARNING);
+    _log($msg, 'warning');
 }
 
 sub log_error($) {
     my ( $msg ) = @_;
-    _log($msg, LOG_ERROR);
+    _log($msg, 'err');
 }
 
 sub _str_is_ip_address($) {
@@ -145,7 +139,7 @@ sub info_version {
 }
 
 sub usage {
-    say( 'Usage: '.PROGRAM_NAME.' [OPTIONS] [FILE...]');
+    say( 'Usage: '.PROGRAM_NAME.' [OPTIONS] [FILE...]' );
     say( 'Test DNS server performance.' );
     say( '' );
     say( 'OPTIONS:' );
@@ -153,10 +147,13 @@ sub usage {
     say( '         specify the buffer size which will contain all the '
          .'running' );
     say( '         sockets (by default: '.DEFAULT_JOBS.')' );
+    say( '   -e' );
+    say( '         write the logs to standard error output as well to '
+         .'the system log' );
     say( '   -h, --help' );
     say( '         display this help and exit' );
     say( '   -i' );
-    say( '         force the dns in iterative mode, (by default it\'s ' );
+    say( '         force the dns in iterative mode (by default it\'s ' );
     say( '         recursive)' );
     say( '   -j' );
     say( '         display the output statistics formated in json' );
@@ -167,8 +164,10 @@ sub usage {
     say( '   -t <timeout in seconds>' );
     say( '         change the resolution timeout (by default: '
          .DEFAULT_TIME_OUT.')' );
-    say( '   -v' );
-    say( '         active verbose mode' );
+    say( '   -v <log priority mask>' );
+    say( '         the logs are managed by syslog sets the log priority mask '
+         .'(0 to 7)' );
+    say( '         to defined which calls may be logged' );
     say( '   --version' );
     say( '         display '.PROGRAM_NAME.' version' );
 }
@@ -395,6 +394,7 @@ sub burst($$$) {
 #-----------------------------------------------------------------------------#
 # Options
 #-----------------------------------------------------------------------------#
+
 my %opts;
 my $server = undef;
 my $timeout = DEFAULT_TIME_OUT;
@@ -402,17 +402,37 @@ my $recurse = RECURSION_OK;
 my $jobs = DEFAULT_JOBS;
 my $rqts_by_domain = DEFAULT_RQTS_BY_DOMAIN;
 my $display_in_json = 0;
+my $verbosity_lvl = 0;
 
-getopts( 'hvijb:s:t:m:', \%opts ) or abort();
+getopts( 'hiejv:b:s:t:m:', \%opts ) or abort();
+
+if ( defined $opts{e} ) {
+    openlog(PROGRAM_NAME, DEFAULT_SYSLOG_CONFIG.',perror', LOG_USER);
+} else {
+    openlog(PROGRAM_NAME, DEFAULT_SYSLOG_CONFIG, LOG_USER);
+}
+
+if ( defined $opts{v} ) {
+    $verbosity_lvl = $opts{v};
+
+    unless ($opts{v} =~ /^\d+$/m) {
+        $verbosity_lvl = DEFAULT_VERBOSITY_LVL;
+    } elsif ( $verbosity_lvl < 0 ) {
+        $verbosity_lvl = 0;
+    } elsif ( $verbosity_lvl > 7 ) {
+        $verbosity_lvl = 7;
+    }
+
+    setlogmask((LOG_UPTO($verbosity_lvl)));
+
+    log_error('Verbose level set to: '.$verbosity_lvl);
+} else {
+    setlogmask((LOG_UPTO(DEFAULT_VERBOSITY_LVL)));
+}
 
 if ( defined $opts{h} ) {
     usage();
     exit 0;
-}
-
-if ( defined $opts{v} ) {
-    $verbosity = VERBOSE_ACTIVE;
-    log_info('Verbose is now active');
 }
 
 if ( defined $opts{j} ) {
