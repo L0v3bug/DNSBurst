@@ -1,4 +1,23 @@
 #!/usr/bin/env perl
+
+###############################################################################
+# Program Name: DNSBurst                      Version: 1.0.0
+#
+# Description:
+#   Test DNS server performance.
+#
+#
+# Author: Antoine Brunet          Date: 28/11/2018
+#
+#
+# Revision History
+#
+# Version                      Date                      Who
+#-----------------------------------------------------------------------------
+# 1.0.0                        28/11/2018                Antoine Brunet
+#
+###############################################################################
+
 use strict;
 use warnings;
 use Data::Dumper;
@@ -14,7 +33,7 @@ use Sys::Syslog;
 use Sys::Syslog qw(:standard :macros);
 
 use constant PROGRAM_NAME               => 'dnsburst';
-use constant PROGRAM_VERSION            => '1.0';
+use constant PROGRAM_VERSION            => '1.0.0';
 
 use constant RECURSION_OK               => 1;
 use constant RECURSION_NOK              => 0;
@@ -24,8 +43,8 @@ use constant ROUND_FLOAT                => 5;
 use constant DEFAULT_TIME_OUT           => 10;
 use constant DEFAULT_JOBS               => 10;
 use constant DEFAULT_RQTS_BY_DOMAIN     => 1;
-use constant DEFAULT_SYSLOG_CONFIG     => "nofatal,ndelay,pid";
-use constant DEFAULT_VERBOSITY_LVL     => 4;
+use constant DEFAULT_SYSLOG_CONFIG      => "nofatal,ndelay,pid";
+use constant DEFAULT_VERBOSITY_LVL      => 4;
 
 
 $Getopt::Std::STANDARD_HELP_VERSION = 1;
@@ -45,6 +64,8 @@ my $priorities_tag = {
 # Subroutines
 #-----------------------------------------------------------------------------#
 
+# Check the remaining arguments after the getopts parsing.
+# They must be valid and non empty files.
 sub check_arguments($) {
     my ( $args ) = @_;
     my $nb_files = scalar @$args;
@@ -84,31 +105,33 @@ sub check_arguments($) {
     }
 }
 
+# Logging with syslog
 sub _log($$) {
     my ( $msg, $lvl ) = @_;
-    syslog($lvl, $priorities_tag->{$lvl}.' '.$msg);
+    syslog( $lvl, $priorities_tag->{$lvl}.' '.$msg );
 }
 
 sub log_debug($) {
     my ( $msg ) = @_;
-    _log($msg, 'debug');
+    _log( $msg, 'debug' );
 }
 
 sub log_info($) {
     my ( $msg ) = @_;
-    _log($msg, 'info');
+    _log( $msg, 'info' );
 }
 
 sub log_warning($) {
     my ( $msg ) = @_;
-    _log($msg, 'warning');
+    _log( $msg, 'warning' );
 }
 
 sub log_error($) {
     my ( $msg ) = @_;
-    _log($msg, 'err');
+    _log( $msg, 'err' );
 }
 
+# Return 1 if the argument `str` is an IP address, else return 0
 sub _str_is_ip_address($) {
     my ( $str ) = @_;
 
@@ -145,11 +168,11 @@ sub usage {
     say( 'OPTIONS:' );
     say( '   -b <buffer size>' );
     say( '         specify the buffer size which will contain all the '
-         .'running' );
+         .'running ' );
     say( '         sockets (by default: '.DEFAULT_JOBS.')' );
-    say( '   -e' );
-    say( '         write the logs to standard error output as well to '
-         .'the system log' );
+    say( '   -d' );
+    say( '         debug mode, write the logs to standard error output as ' );
+    say( '         well to the system log' );
     say( '   -h, --help' );
     say( '         display this help and exit' );
     say( '   -i' );
@@ -172,6 +195,7 @@ sub usage {
     say( '         display '.PROGRAM_NAME.' version' );
 }
 
+# Resolve a domain name to an  IP address.
 sub _basic_dns_resolution($) {
     my ( $domain ) = @_;
 
@@ -186,6 +210,9 @@ sub _basic_dns_resolution($) {
     return $answers[0]->address;
 }
 
+# Return a resolver object.
+# The server argument can be an IP address as a 
+# domain name in this last case the domain name will be first resolv.
 sub create_resolver(;$$$) {
     my ( $server, $timeout, $recurse ) = @_;
     my $resolver = undef;
@@ -219,7 +246,7 @@ sub _calcul_stats($) {
     my $average_time_rqt_real = 0;
     my $average_time_rqt_user = 0;
     my $average_time_rqt_system = 0;
-    my $average_requests_second = 0;
+    my $average_requests_second = $info_burst->{'total_requests'};
     my $succeed_rqts_percent = 0;
     my $failed_rqts_percent = 0;
 
@@ -237,7 +264,7 @@ sub _calcul_stats($) {
         $failed_rqts_percent = ($failed_requests / $info_burst->{'total_requests'}) * 100;
     }
 
-    if ( $info_burst->{'total_time'}->[0] ) {
+    if ( $total_time_real ) {
         $average_requests_second = $info_burst->{'total_requests'} / $total_time_real;
     }
 
@@ -304,43 +331,41 @@ sub _dns_rqt($$$) {
     push @$buffer, $packet;
 }
 
-sub _dns_answers_ready($$$;$) {
-    my ( $resolver, $buffer, $info_burst, $must_wait_to_be_empty ) = @_;
-    my $repeat = 1;
+sub _dns_answers_ready($$$) {
+    my ( $resolver, $buffer, $info_burst ) = @_;
+  
+    my @remaining = (); 
 
-    while ( $repeat or
-            ( defined($must_wait_to_be_empty) and
-              $must_wait_to_be_empty == 1 and scalar @$buffer > 0 ) ) {
-        for ( my $i = 0; $i < scalar @$buffer; $i++ ) {
-            my $packet = @$buffer[$i];
-            if ( $resolver->bgisready( $packet ) ) {
-                $packet = $resolver->bgread($packet);
-                splice( @$buffer, $i, 1 );
-                $i--;
-                $info_burst->{'answer_count'}++;
-                $repeat = 0;
-                if ( defined( $packet ) ) {
-                    my $code = $packet->header->rcode;
-                    if ($code eq 'NOERROR') {
-                        $info_burst->{'succeed_requests'}++;
-                    } else {
-                        $info_burst->{'failed_requests'}++;
-                    }
-                } else {
-                    $info_burst->{'failed_requests'}++;
-                }
-            }
+    foreach my $packet (@$buffer) {
+        unless ( $resolver->bgisready( $packet ) ) {
+            push @remaining, $packet;
+            next;
         }
 
-        if ( $repeat ) {
-            log_debug( 'Sleep '.SLEEP );
-            Time::HiRes::sleep( SLEEP );
+        my $packet = $resolver->bgread( $packet );
+        $info_burst->{'answer_count'}++;
+
+        if ( $packet and $packet->header->rcode eq 'NOERROR') {
+            $info_burst->{'succeed_requests'}++;
+        } else {
+            $info_burst->{'failed_requests'}++;
         }
     }
+
+    if ( scalar @remaining == scalar @$buffer ) {
+        log_debug( 'Sleep '.SLEEP );
+        Time::HiRes::sleep( SLEEP );
+    }
+  
+    return @remaining;
 }
 
+# Run the dns burst, first send dns requests without waiting for the
+# response and store the sockets in a buffer. When the buffer is full
+# check all the sockets state stored in the buffer and remove those with
+# reply.
 sub burst($$$) {
-    my ( $resolver, $jobs, $rqts_by_domain ) = @_;
+    my ( $resolver, $buffer_size, $rqts_by_domain ) = @_;
     my @jobs_buffer = ();
     my $is_job_start = 0;
     my $t0 = undef;
@@ -370,20 +395,15 @@ sub burst($$$) {
         $info_burst->{'domain_requests'}++;
 
         my $remaining_rqts = $rqts_by_domain;
-        while ( $remaining_rqts > 0 ) {
-            if ( scalar @jobs_buffer < $jobs and $remaining_rqts > 0 ) {
-                for ( ; $remaining_rqts > 0 and scalar @jobs_buffer < $jobs;
-                        $remaining_rqts-- ) {
-                    _dns_rqt( $resolver, \@jobs_buffer, $domain );
-                    $info_burst->{'total_requests'}++;
-                }
-            } else {
-                _dns_answers_ready( $resolver, \@jobs_buffer, $info_burst );
+        while ( $remaining_rqts > 0 or scalar @jobs_buffer > 0 ) {
+            while ( scalar @jobs_buffer < $buffer_size and $remaining_rqts > 0 ) {
+              _dns_rqt( $resolver, \@jobs_buffer, $domain );
+              $info_burst->{'total_requests'}++;
+              $remaining_rqts--;
             }
+            @jobs_buffer = _dns_answers_ready( $resolver, \@jobs_buffer, $info_burst );
         }
     }
-
-    _dns_answers_ready( $resolver, \@jobs_buffer, $info_burst, 1 );
 
     my $t1 = Benchmark->new;
     $info_burst->{'total_time'} =  timediff($t1, $t0);
@@ -404,9 +424,9 @@ my $rqts_by_domain = DEFAULT_RQTS_BY_DOMAIN;
 my $display_in_json = 0;
 my $verbosity_lvl = 0;
 
-getopts( 'hiejv:b:s:t:m:', \%opts ) or abort();
+getopts( 'hidjv:b:s:t:m:', \%opts ) or abort();
 
-if ( defined $opts{e} ) {
+if ( defined $opts{d} ) {
     openlog(PROGRAM_NAME, DEFAULT_SYSLOG_CONFIG.',perror', LOG_USER);
 } else {
     openlog(PROGRAM_NAME, DEFAULT_SYSLOG_CONFIG, LOG_USER);
@@ -425,7 +445,6 @@ if ( defined $opts{v} ) {
 
     setlogmask((LOG_UPTO($verbosity_lvl)));
 
-    log_error('Verbose level set to: '.$verbosity_lvl);
 } else {
     setlogmask((LOG_UPTO(DEFAULT_VERBOSITY_LVL)));
 }
