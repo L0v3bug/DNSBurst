@@ -211,7 +211,7 @@ sub _basic_dns_resolution($) {
 }
 
 # Return a resolver object.
-# The server argument can be an IP address as a 
+# The server argument can be an IP address as a
 # domain name in this last case the domain name will be first resolv.
 sub create_resolver(;$$$) {
     my ( $server, $timeout, $recurse ) = @_;
@@ -333,8 +333,8 @@ sub _dns_rqt($$$) {
 
 sub _dns_answers_ready($$$) {
     my ( $resolver, $buffer, $info_burst ) = @_;
-  
-    my @remaining = (); 
+
+    my @remaining = ();
 
     foreach my $packet (@$buffer) {
         unless ( $resolver->bgisready( $packet ) ) {
@@ -356,7 +356,7 @@ sub _dns_answers_ready($$$) {
         log_debug( 'Sleep '.SLEEP );
         Time::HiRes::sleep( SLEEP );
     }
-  
+
     return @remaining;
 }
 
