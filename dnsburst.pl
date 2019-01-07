@@ -462,7 +462,7 @@ if ( defined $opts{j} ) {
 if ( defined $opts{b} ) {
     if ( $opts{b} =~ /^\d+$/m and $opts{b} > 0 ) {
         $jobs = $opts{b};
-        log_info('The jobs option has been set to '.$jobs);
+        log_info('The buffer size option has been set to '.$jobs);
     } else {
         log_warning('Wrong value for `-b` option, the default value (buffer='.
         $jobs.') will be used');
